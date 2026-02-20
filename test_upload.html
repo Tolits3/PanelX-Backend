@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Test Image Upload</title>
+</head>
+<body style="font-family: sans-serif; background: #111; color: #fff; padding: 30px;">
+  <h1>🧪 Test AI Upload Backend</h1>
+
+  <form id="uploadForm" enctype="multipart/form-data">
+    <input type="file" name="image" accept="image/*"><br><br>
+    <input type="text" name="prompt" placeholder="Prompt" value="A fantasy warrior under the moonlight"><br><br>
+    <select name="style">
+      <option value="manga">Manga</option>
+      <option value="manhwa">Manhwa</option>
+    </select><br><br>
+    <button type="submit">Generate Image</button>
+  </form>
+
+  <div id="output"></div>
+
+  <script>
+    document.getElementById("uploadForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const data = new FormData(form);
+
+      const res = await fetch("http://localhost:8000/generate-image", {
+        method: "POST",
+        body: data
+      });
+      const json = await res.json();
+      console.log(json);
+      document.getElementById("output").innerHTML = json.image_url
+        ? `<p>✅ Image generated!</p><img src="${json.image_url}" style="max-width:400px;border:2px solid #444;">`
+        : `<p>❌ Error: ${JSON.stringify(json)}</p>`;
+    };
+  </script>
+</body>
+</html>
