@@ -1,260 +1,312 @@
 # backend/api/routes/users.py
-
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
-import json
 import os
-import shutil
 
 router = APIRouter()
 
-# User profiles stored in JSON file (can migrate to DB later)
-USERS_FILE = "data/users.json"
-AVATARS_DIR = "data/avatars"
-os.makedirs("data", exist_ok=True)
-os.makedirs(AVATARS_DIR, exist_ok=True)
+# Check if using MySQL or JSON
+DATABASE_URL = os.getenv("DATABASE_URL")
+USE_DB = bool(DATABASE_URL)
 
-# Initialize file if it doesn't exist
-if not os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "w") as f:
-        json.dump({}, f)
+if USE_DB:
+    from sqlalchemy import create_engine, text
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    
+    def query(sql: str, params: dict = None, fetch: str = "all"):
+        with engine.connect() as conn:
+            result = conn.execute(text(sql), params or {})
+            conn.commit()
+            if fetch == "one":
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+            elif fetch == "all":
+                rows = result.fetchall()
+                return [dict(r._mapping) for r in rows]
+            return None
+else:
+    import json
+    DATA_DIR = "data"
+    os.makedirs(DATA_DIR, exist_ok=True)
+    
+    def load_json(filename):
+        path = os.path.join(DATA_DIR, filename)
+        if not os.path.exists(path):
+            with open(path, "w") as f:
+                json.dump({}, f)
+        with open(path, "r") as f:
+            return json.load(f)
+    
+    def save_json(filename, data):
+        path = os.path.join(DATA_DIR, filename)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
 
-# ========================================
+# ─────────────────────────────────────────
 # MODELS
-# ========================================
+# ─────────────────────────────────────────
 class UserProfile(BaseModel):
     uid: str
     email: str
     username: Optional[str] = None
-    role: str  # "creator" or "reader"
+    role: str
     avatar_url: Optional[str] = None
     bio: Optional[str] = None
-    created_at: str
-    updated_at: Optional[str] = None
+    created_at: Optional[str] = None
 
 class UpdateProfile(BaseModel):
     username: Optional[str] = None
     bio: Optional[str] = None
 
-class UserResponse(BaseModel):
-    success: bool
-    message: str
-    user: Optional[dict] = None
-
-# ========================================
-# HELPER FUNCTIONS
-# ========================================
-def load_users():
-    """Load users from file"""
-    try:
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_users(data):
-    """Save users to file"""
-    with open(USERS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-def generate_username_from_email(email: str) -> str:
-    """Generate default username from email"""
-    return email.split("@")[0]
-
-# ========================================
+# ─────────────────────────────────────────
 # ROUTES
-# ========================================
+# ─────────────────────────────────────────
 
 @router.post("/create")
 async def create_user(profile: UserProfile):
-    """Create new user profile after Firebase signup"""
+    """Create new user account"""
     try:
-        users = load_users()
-        
-        # Check if user already exists
-        if profile.uid in users:
-            return UserResponse(
-                success=False,
-                message="User already exists"
-            )
-        
         # Generate username if not provided
         if not profile.username:
-            profile.username = generate_username_from_email(profile.email)
+            profile.username = profile.email.split("@")[0]
         
-        # Check if username is taken
-        for uid, user_data in users.items():
-            if user_data.get("username") == profile.username:
+        # Set created_at if not provided
+        if not profile.created_at:
+            profile.created_at = datetime.now().isoformat()
+
+        if USE_DB:
+            # Check if user already exists
+            existing = query(
+                "SELECT uid FROM users WHERE uid = :uid",
+                {"uid": profile.uid},
+                fetch="one"
+            )
+            
+            if existing:
+                # User exists, just return success
+                user = query(
+                    "SELECT * FROM users WHERE uid = :uid",
+                    {"uid": profile.uid},
+                    fetch="one"
+                )
+                return {
+                    "success": True,
+                    "message": "User already exists",
+                    "user": user
+                }
+            
+            # Check if username is taken
+            username_taken = query(
+                "SELECT uid FROM users WHERE username = :username",
+                {"username": profile.username},
+                fetch="one"
+            )
+            
+            if username_taken:
                 profile.username = f"{profile.username}_{profile.uid[:4]}"
-                break
+            
+            # Create new user
+            query("""
+                INSERT INTO users (uid, email, username, role, avatar_url, bio, credit_balance, created_at, updated_at)
+                VALUES (:uid, :email, :username, :role, :avatar_url, :bio, 1000, :created_at, :updated_at)
+            """, {
+                "uid": profile.uid,
+                "email": profile.email,
+                "username": profile.username,
+                "role": profile.role,
+                "avatar_url": profile.avatar_url,
+                "bio": profile.bio,
+                "created_at": profile.created_at,
+                "updated_at": datetime.now().isoformat()
+            }, fetch=None)
+            
+            # Get the created user
+            user = query(
+                "SELECT * FROM users WHERE uid = :uid",
+                {"uid": profile.uid},
+                fetch="one"
+            )
+            
+            # Give free credits
+            import uuid
+            query("""
+                INSERT INTO credit_transactions (id, user_uid, transaction_type, amount, balance_after, description, created_at)
+                VALUES (:id, :user_uid, 'free', 1000, 1000, '🎉 Welcome! 1000 free credits', :created_at)
+            """, {
+                "id": str(uuid.uuid4()),
+                "user_uid": profile.uid,
+                "created_at": datetime.now().isoformat()
+            }, fetch=None)
+            
+            return {
+                "success": True,
+                "message": "User created successfully",
+                "user": user
+            }
         
-        # Store user profile
-        users[profile.uid] = {
-            "uid": profile.uid,
-            "email": profile.email,
-            "username": profile.username,
-            "role": profile.role,
-            "avatar_url": profile.avatar_url,
-            "bio": profile.bio,
-            "created_at": profile.created_at,
-            "updated_at": datetime.now().isoformat()
-        }
-        
-        save_users(users)
-        
-        return UserResponse(
-            success=True,
-            message="User profile created successfully",
-            user=users[profile.uid]
-        )
+        else:
+            # JSON fallback
+            users = load_json("users.json")
+            
+            if profile.uid in users:
+                return {
+                    "success": True,
+                    "message": "User already exists",
+                    "user": users[profile.uid]
+                }
+            
+            users[profile.uid] = {
+                "uid": profile.uid,
+                "email": profile.email,
+                "username": profile.username,
+                "role": profile.role,
+                "avatar_url": profile.avatar_url,
+                "bio": profile.bio,
+                "credit_balance": 1000,
+                "created_at": profile.created_at,
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            save_json("users.json", users)
+            
+            return {
+                "success": True,
+                "message": "User created successfully",
+                "user": users[profile.uid]
+            }
     
     except Exception as e:
+        print(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/{uid}")
 async def get_user(uid: str):
-    """Get user profile by UID"""
+    """Get user by UID"""
     try:
-        users = load_users()
-        
-        if uid not in users:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        return UserResponse(
-            success=True,
-            message="User found",
-            user=users[uid]
-        )
+        if USE_DB:
+            user = query(
+                "SELECT * FROM users WHERE uid = :uid",
+                {"uid": uid},
+                fetch="one"
+            )
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            return {
+                "success": True,
+                "user": user
+            }
+        else:
+            users = load_json("users.json")
+            
+            if uid not in users:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            return {
+                "success": True,
+                "user": users[uid]
+            }
     
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.put("/{uid}")
 async def update_user(uid: str, updates: UpdateProfile):
     """Update user profile"""
     try:
-        users = load_users()
-        
-        if uid not in users:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Check if new username is taken
-        if updates.username:
-            for user_uid, user_data in users.items():
-                if user_uid != uid and user_data.get("username") == updates.username:
+        if USE_DB:
+            # Check if username is taken
+            if updates.username:
+                taken = query(
+                    "SELECT uid FROM users WHERE username = :username AND uid != :uid",
+                    {"username": updates.username, "uid": uid},
+                    fetch="one"
+                )
+                
+                if taken:
                     raise HTTPException(status_code=400, detail="Username already taken")
             
-            users[uid]["username"] = updates.username
+            # Update user
+            query("""
+                UPDATE users
+                SET username = COALESCE(:username, username),
+                    bio = COALESCE(:bio, bio),
+                    updated_at = :updated_at
+                WHERE uid = :uid
+            """, {
+                "username": updates.username,
+                "bio": updates.bio,
+                "updated_at": datetime.now().isoformat(),
+                "uid": uid
+            }, fetch=None)
+            
+            # Get updated user
+            user = query(
+                "SELECT * FROM users WHERE uid = :uid",
+                {"uid": uid},
+                fetch="one"
+            )
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            return {
+                "success": True,
+                "message": "Profile updated",
+                "user": user
+            }
         
-        if updates.bio is not None:
-            users[uid]["bio"] = updates.bio
-        
-        users[uid]["updated_at"] = datetime.now().isoformat()
-        
-        save_users(users)
-        
-        return UserResponse(
-            success=True,
-            message="Profile updated successfully",
-            user=users[uid]
-        )
+        else:
+            users = load_json("users.json")
+            
+            if uid not in users:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            if updates.username:
+                users[uid]["username"] = updates.username
+            
+            if updates.bio is not None:
+                users[uid]["bio"] = updates.bio
+            
+            users[uid]["updated_at"] = datetime.now().isoformat()
+            
+            save_json("users.json", users)
+            
+            return {
+                "success": True,
+                "message": "Profile updated",
+                "user": users[uid]
+            }
     
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{uid}/avatar")
-async def upload_avatar(uid: str, file: UploadFile = File(...)):
-    """Upload user avatar"""
-    try:
-        users = load_users()
-        
-        if uid not in users:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Validate file type
-        allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-        if file.content_type not in allowed_types:
-            raise HTTPException(status_code=400, detail="Invalid file type. Only images allowed.")
-        
-        # Generate filename
-        extension = file.filename.split(".")[-1]
-        filename = f"{uid}.{extension}"
-        filepath = os.path.join(AVATARS_DIR, filename)
-        
-        # Save file
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # Update user profile
-        avatar_url = f"http://localhost:8000/avatars/{filename}"
-        users[uid]["avatar_url"] = avatar_url
-        users[uid]["updated_at"] = datetime.now().isoformat()
-        
-        save_users(users)
-        
-        return UserResponse(
-            success=True,
-            message="Avatar uploaded successfully",
-            user=users[uid]
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/username/{username}")
+@router.get("/check/username/{username}")
 async def check_username(username: str):
     """Check if username is available"""
     try:
-        users = load_users()
-        
-        for uid, user_data in users.items():
-            if user_data.get("username") == username:
-                return {
-                    "available": False,
-                    "message": "Username is taken"
-                }
-        
-        return {
-            "available": True,
-            "message": "Username is available"
-        }
+        if USE_DB:
+            taken = query(
+                "SELECT uid FROM users WHERE username = :username",
+                {"username": username},
+                fetch="one"
+            )
+            
+            return {"available": not taken}
+        else:
+            users = load_json("users.json")
+            taken = any(u.get("username") == username for u in users.values())
+            return {"available": not taken}
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/{uid}")
-async def delete_user(uid: str):
-    """Delete user profile"""
-    try:
-        users = load_users()
-        
-        if uid not in users:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Delete avatar if exists
-        if users[uid].get("avatar_url"):
-            filename = users[uid]["avatar_url"].split("/")[-1]
-            filepath = os.path.join(AVATARS_DIR, filename)
-            if os.path.exists(filepath):
-                os.remove(filepath)
-        
-        del users[uid]
-        save_users(users)
-        
-        return {
-            "success": True,
-            "message": "User deleted successfully"
-        }
-    
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
