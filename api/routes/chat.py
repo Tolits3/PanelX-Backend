@@ -26,8 +26,12 @@ def get_ai_response(message: str) -> str:
     
     msg = message.lower().strip()
     
-    # Greetings
-    if any(word in msg for word in ["hello", "hi", "hey", "greetings"]):
+    # Introduction/creator
+    if any(word in msg for word in ["i'm", "i am", "my name", "creator", "made this", "built this"]):
+        return "Nice to meet you! 👋 Awesome that you're the creator of PanelX! I'm here to help you and your users brainstorm comic ideas. What kind of story are you working on today?"
+    
+    # Greetings (only for simple greetings, not full sentences)
+    if msg in ["hello", "hi", "hey", "greetings", "yo", "sup", "what's up"]:
         return "Hello! 👋 I'm your AI comic assistant. I can help you brainstorm ideas for your comic panels! Try asking me to 'generate: a hero in space' or just chat about your story ideas."
     
     # Help
@@ -92,16 +96,20 @@ Want examples for a specific scene?"""
         else:
             return "🎨 To generate an image, type: 'generate: your description' (e.g., 'generate: a dragon breathing fire'). Note: This requires Replicate credits."
     
-    # Default friendly response
-    return f"""I see you mentioned: "{message[:50]}{'...' if len(message) > 50 else ''}"
-
-I'm here to help with your comic creation! I can:
-• Brainstorm story ideas and characters
-• Give tips on panel composition
-• Suggest dialogue improvements
-• Generate images (when Replicate credits available)
-
-What would you like to explore?"""
+    # Default conversational response
+    responses = [
+        f"Interesting! You mentioned '{message[:40]}{'...' if len(message) > 40 else ''}'. I'm here to help with your comic! Want to brainstorm a character, work on a scene, or get tips on composition?",
+        f"I see! Tell me more about that. Are you working on a specific comic scene right now? I can help with story ideas, character concepts, or panel layout tips.",
+        f"Got it! I'm your comic creation assistant. I can help you: 💡 Brainstorm story ideas | 🎨 Plan panel compositions | 💬 Write dialogue | 📖 Develop characters. What interests you?",
+    ]
+    
+    # Pick response based on message length
+    if len(message) < 20:
+        return responses[2]
+    elif "?" in message:
+        return responses[1]
+    else:
+        return responses[0]
 
 
 # ─────────────────────────────────────────────────────
