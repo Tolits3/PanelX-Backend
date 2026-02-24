@@ -1,34 +1,154 @@
 # backend/api/routes/chat.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 import os
 import requests
 import time
+import uuid
+from datetime import datetime
 
 router = APIRouter()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Database connection (if available)
+USE_DB = bool(DATABASE_URL)
+if USE_DB:
+    from sqlalchemy import create_engine, text
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    
+    def query(sql: str, params: dict = None, fetch: str = "all"):
+        with engine.connect() as conn:
+            result = conn.execute(text(sql), params or {})
+            conn.commit()
+            if fetch == "one":
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+            elif fetch == "all":
+                rows = result.fetchall()
+                return [dict(r._mapping) for r in rows]
+            return None
 
 class ChatRequest(BaseModel):
     message: str
     generate_image: bool = False
+    user_uid: Optional[str] = None
+    session_id: Optional[str] = None
 
 class ImageGenerationRequest(BaseModel):
     prompt: str
     style: Optional[str] = "comic book art"
 
 # ─────────────────────────────────────────────────────
-# GROQ AI CHAT - Real AI Conversations!
+# CONTENT MODERATION - Basic keyword filtering
 # ─────────────────────────────────────────────────────
-def chat_with_groq(message: str) -> str:
-    """Chat with Groq's LLaMA model for natural conversations"""
+HARMFUL_KEYWORDS = [
+    # Add your moderation keywords here
+    "violence", "nsfw", "explicit", "harmful", "illegal",
+    # This is a basic example - use a proper moderation API for production
+]
+
+def check_content_safety(text: str) -> tuple[bool, str]:
+    """Basic content moderation - returns (is_safe, reason)"""
+    text_lower = text.lower()
     
-    if not GROQ_API_KEY:
-        return "⚠️ Groq API key not configured. Add GROQ_API_KEY to your environment variables to enable AI chat!"
+    for keyword in HARMFUL_KEYWORDS:
+        if keyword in text_lower:
+            return False, f"Contains inappropriate content: {keyword}"
+    
+    return True, ""
+
+# ─────────────────────────────────────────────────────
+# CHAT LOGGING
+# ─────────────────────────────────────────────────────
+def log_chat(
+    user_uid: str,
+    session_id: str,
+    message_type: str,
+    message_content: str,
+    image_generated: bool = False,
+    image_url: str = None,
+    image_prompt: str = None,
+    model_used: str = None,
+    response_time_ms: int = None,
+    flagged: bool = False,
+    flag_reason: str = None,
+    ip_address: str = None,
+    user_agent: str = None
+):
+    """Log chat message to database"""
+    
+    if not USE_DB:
+        # Fallback: log to file or just print
+        print(f"[CHAT LOG] {user_uid}: {message_content[:50]}...")
+        return
     
     try:
+        log_id = str(uuid.uuid4())
+        query("""
+            INSERT INTO chat_logs (
+                id, user_uid, session_id, message_type, message_content,
+                image_generated, image_url, image_prompt, model_used,
+                response_time_ms, flagged, flag_reason, ip_address, user_agent,
+                created_at
+            ) VALUES (
+                :id, :user_uid, :session_id, :message_type, :message_content,
+                :image_generated, :image_url, :image_prompt, :model_used,
+                :response_time_ms, :flagged, :flag_reason, :ip_address, :user_agent,
+                :created_at
+            )
+        """, {
+            "id": log_id,
+            "user_uid": user_uid,
+            "session_id": session_id,
+            "message_type": message_type,
+            "message_content": message_content,
+            "image_generated": image_generated,
+            "image_url": image_url,
+            "image_prompt": image_prompt,
+            "model_used": model_used,
+            "response_time_ms": response_time_ms,
+            "flagged": flagged,
+            "flag_reason": flag_reason,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+            "created_at": datetime.now().isoformat()
+        }, fetch=None)
+        
+        # If flagged, create a moderation entry
+        if flagged:
+            query("""
+                INSERT INTO flagged_content (
+                    chat_log_id, user_uid, reason, severity, created_at
+                ) VALUES (
+                    :chat_log_id, :user_uid, :reason, :severity, :created_at
+                )
+            """, {
+                "chat_log_id": log_id,
+                "user_uid": user_uid,
+                "reason": flag_reason,
+                "severity": "medium",  # Can be determined by severity of keywords
+                "created_at": datetime.now().isoformat()
+            }, fetch=None)
+            
+    except Exception as e:
+        print(f"Error logging chat: {e}")
+
+# ─────────────────────────────────────────────────────
+# GROQ AI CHAT
+# ─────────────────────────────────────────────────────
+def chat_with_groq(message: str) -> str:
+    """Chat with Groq's LLaMA model"""
+    
+    if not GROQ_API_KEY:
+        return "⚠️ AI chat unavailable. Please contact support."
+    
+    try:
+        start_time = time.time()
+        
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
@@ -36,23 +156,22 @@ def chat_with_groq(message: str) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "llama-3.3-70b-versatile",  # Fast and smart!
+                "model": "llama-3.3-70b-versatile",
                 "messages": [
                     {
                         "role": "system",
                         "content": """You are a helpful AI assistant for PanelX, a comic creation platform. 
-                        
+
 Your role is to help comic creators with:
 - Brainstorming story ideas and plot concepts
 - Developing characters and their backgrounds
 - Suggesting panel compositions and layouts
 - Writing dialogue and captions
-- Giving creative feedback on their work
-- Providing comic creation tips and best practices
+- Giving creative feedback
 
-Be friendly, creative, and encouraging. Keep responses concise (2-3 sentences usually). 
-When users mention generating images, remind them they can type "generate: description" to create comic panels.
-Be enthusiastic about their comic ideas!"""
+Be friendly, creative, and encouraging. Keep responses concise (2-3 sentences).
+IMPORTANT: Never generate, suggest, or engage with harmful, violent, NSFW, or illegal content.
+If asked for inappropriate content, politely decline and redirect to creative comic ideas."""
                     },
                     {
                         "role": "user",
@@ -66,24 +185,23 @@ Be enthusiastic about their comic ideas!"""
             timeout=30
         )
         
+        response_time = int((time.time() - start_time) * 1000)
+        
         if response.status_code == 200:
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            return data["choices"][0]["message"]["content"], response_time
         else:
-            return f"⚠️ Groq API error: {response.status_code}. Please try again!"
+            return f"⚠️ AI temporarily unavailable. Please try again!", 0
             
-    except requests.exceptions.Timeout:
-        return "⚠️ Response timed out. Please try again!"
     except Exception as e:
         print(f"Groq error: {e}")
-        return "⚠️ Something went wrong. Please try again!"
-
+        return "⚠️ Something went wrong. Please try again!", 0
 
 # ─────────────────────────────────────────────────────
-# IMAGE GENERATION - REPLICATE (Optional)
+# IMAGE GENERATION (with logging)
 # ─────────────────────────────────────────────────────
 def call_replicate_api(model: str, input_data: dict):
-    """Call Replicate API for image generation"""
+    """Call Replicate API"""
     
     if not REPLICATE_API_KEY:
         raise Exception("Replicate API key not configured")
@@ -105,7 +223,6 @@ def call_replicate_api(model: str, input_data: dict):
     prediction = response.json()
     prediction_id = prediction["id"]
     
-    # Poll for result (max 60 seconds)
     for _ in range(60):
         time.sleep(1)
         status_response = requests.get(
@@ -122,23 +239,23 @@ def call_replicate_api(model: str, input_data: dict):
     
     raise Exception("Generation timed out")
 
-
 @router.post("/generate-image")
-async def generate_image(req: ImageGenerationRequest):
-    """Generate comic panel image using Replicate"""
+async def generate_image(req: ImageGenerationRequest, request: Request):
+    """Generate image with logging"""
     
     if not REPLICATE_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="Image generation unavailable. Replicate API key not configured."
-        )
+        raise HTTPException(status_code=503, detail="Image generation unavailable")
+    
+    # Content safety check
+    is_safe, reason = check_content_safety(req.prompt)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"Inappropriate prompt: {reason}")
     
     try:
-        enhanced_prompt = f"{req.prompt}, {req.style}, highly detailed, professional comic book illustration, vibrant colors"
+        start_time = time.time()
+        enhanced_prompt = f"{req.prompt}, {req.style}, highly detailed, professional comic art"
         
-        # SDXL model
         model_version = "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b"
-        
         output = call_replicate_api(model_version, {
             "prompt": enhanced_prompt,
             "width": 896,
@@ -146,8 +263,10 @@ async def generate_image(req: ImageGenerationRequest):
             "num_outputs": 1,
             "guidance_scale": 7.5,
             "num_inference_steps": 30,
-            "negative_prompt": "blurry, bad anatomy, ugly, distorted, low quality"
+            "negative_prompt": "blurry, bad anatomy, ugly"
         })
+        
+        response_time = int((time.time() - start_time) * 1000)
         
         if not output:
             raise Exception("No image generated")
@@ -158,21 +277,62 @@ async def generate_image(req: ImageGenerationRequest):
             "success": True,
             "image_url": image_url,
             "prompt": req.prompt,
-            "model": "SDXL"
+            "model": "SDXL",
+            "response_time_ms": response_time
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # ─────────────────────────────────────────────────────
-# MAIN CHAT ENDPOINT
+# MAIN CHAT ENDPOINT (with logging)
 # ─────────────────────────────────────────────────────
 @router.post("/message")
-async def chat_message(req: ChatRequest):
-    """AI chat assistant powered by Groq"""
+async def chat_message(req: ChatRequest, request: Request):
+    """AI chat with comprehensive logging"""
     
-    # Check if user wants image generation
+    # Get request metadata
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    session_id = req.session_id or str(uuid.uuid4())
+    
+    # Content safety check
+    is_safe, flag_reason = check_content_safety(req.message)
+    
+    # Log user message
+    if req.user_uid:
+        log_chat(
+            user_uid=req.user_uid,
+            session_id=session_id,
+            message_type="user",
+            message_content=req.message,
+            flagged=not is_safe,
+            flag_reason=flag_reason if not is_safe else None,
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
+    
+    if not is_safe:
+        warning_response = "⚠️ Your message contains inappropriate content. Let's keep our conversations creative and respectful! How about we focus on your comic ideas instead?"
+        
+        # Log warning response
+        if req.user_uid:
+            log_chat(
+                user_uid=req.user_uid,
+                session_id=session_id,
+                message_type="system",
+                message_content=warning_response,
+                ip_address=client_ip
+            )
+        
+        return {
+            "success": False,
+            "response": warning_response,
+            "image_generated": False,
+            "flagged": True
+        }
+    
+    # Check for image generation
     msg_lower = req.message.lower()
     is_image_request = (
         req.generate_image or 
@@ -182,59 +342,110 @@ async def chat_message(req: ChatRequest):
     )
     
     if is_image_request:
-        if not REPLICATE_API_KEY:
-            ai_response = chat_with_groq(
-                "The user wants to generate an image but Replicate credits aren't available. "
-                "Politely let them know image generation is temporarily unavailable but you can still help them brainstorm and plan their comic."
-            )
-            return {
-                "success": True,
-                "response": ai_response,
-                "image_generated": False
-            }
-        
-        # Extract prompt and try to generate
+        # Extract prompt
         prompt = req.message
         for prefix in ["generate:", "draw:", "create:"]:
             if prefix in msg_lower:
                 prompt = req.message[req.message.lower().index(prefix) + len(prefix):].strip()
                 break
         
-        try:
-            result = await generate_image(ImageGenerationRequest(prompt=prompt))
+        if not REPLICATE_API_KEY:
+            response_text = "🎨 Image generation is temporarily unavailable. But I can help you plan and brainstorm your comic ideas!"
             
-            # Ask Groq to create a nice message about the generated image
-            ai_comment = chat_with_groq(
-                f"The user just generated a comic panel image with this prompt: '{prompt}'. "
-                f"Give them a brief, enthusiastic response (1-2 sentences) about their image and maybe a quick tip."
-            )
+            if req.user_uid:
+                log_chat(
+                    user_uid=req.user_uid,
+                    session_id=session_id,
+                    message_type="system",
+                    message_content=response_text,
+                    model_used="none"
+                )
             
             return {
                 "success": True,
-                "response": ai_comment,
-                "image_url": result["image_url"],
-                "image_generated": True
-            }
-        except Exception as e:
-            error_msg = chat_with_groq(
-                f"Image generation failed with error: {str(e)}. "
-                f"Politely let the user know and offer to help them brainstorm instead."
-            )
-            return {
-                "success": False,
-                "response": error_msg,
+                "response": response_text,
                 "image_generated": False
             }
     
-    # Regular chat - use Groq AI
-    ai_response = chat_with_groq(req.message)
+    # Regular chat with Groq
+    ai_response, response_time = chat_with_groq(req.message)
+    
+    # Log AI response
+    if req.user_uid:
+        log_chat(
+            user_uid=req.user_uid,
+            session_id=session_id,
+            message_type="ai",
+            message_content=ai_response,
+            model_used="groq-llama-3.3-70b",
+            response_time_ms=response_time,
+            ip_address=client_ip
+        )
     
     return {
         "success": True,
         "response": ai_response,
-        "image_generated": False
+        "image_generated": False,
+        "session_id": session_id
     }
 
+# ─────────────────────────────────────────────────────
+# ADMIN: View chat logs
+# ─────────────────────────────────────────────────────
+@router.get("/admin/logs")
+async def get_chat_logs(limit: int = 100, flagged_only: bool = False):
+    """Get recent chat logs (admin only - add auth later)"""
+    
+    if not USE_DB:
+        return {"error": "Database not configured"}
+    
+    try:
+        if flagged_only:
+            logs = query("""
+                SELECT * FROM chat_logs 
+                WHERE flagged = 1 
+                ORDER BY created_at DESC 
+                LIMIT :limit
+            """, {"limit": limit}, fetch="all")
+        else:
+            logs = query("""
+                SELECT * FROM chat_logs 
+                ORDER BY created_at DESC 
+                LIMIT :limit
+            """, {"limit": limit}, fetch="all")
+        
+        return {
+            "success": True,
+            "logs": logs,
+            "count": len(logs)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/admin/flagged")
+async def get_flagged_content():
+    """Get flagged content for review (admin only)"""
+    
+    if not USE_DB:
+        return {"error": "Database not configured"}
+    
+    try:
+        flagged = query("""
+            SELECT fc.*, cl.message_content, u.username, u.email
+            FROM flagged_content fc
+            JOIN chat_logs cl ON fc.chat_log_id = cl.id
+            JOIN users u ON fc.user_uid = u.uid
+            WHERE fc.reviewed = 0
+            ORDER BY fc.created_at DESC
+        """, fetch="all")
+        
+        return {
+            "success": True,
+            "flagged": flagged,
+            "count": len(flagged)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")
 async def health_check():
@@ -242,6 +453,7 @@ async def health_check():
         "status": "online",
         "groq_configured": bool(GROQ_API_KEY),
         "replicate_configured": bool(REPLICATE_API_KEY),
+        "logging_enabled": USE_DB,
         "chat_available": bool(GROQ_API_KEY),
         "image_generation_available": bool(REPLICATE_API_KEY),
         "model": "llama-3.3-70b-versatile" if GROQ_API_KEY else None
