@@ -1,24 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ✅ Import route PROPERLY
-from api.routes.images import router as images_router
+from api.routes.users import router as users_router
+from api.routes.series import router as series_router
 
 app = FastAPI()
 
-# ✅ CORS (so frontend can talk to backend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://panelsx.netlify.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Register route
-app.include_router(images_router, prefix="/api/images")
-
+app.include_router(users_router, prefix="/api/users")
+app.include_router(series_router, prefix="/api/series")
 
 @app.get("/")
 def root():
-    return {"message": "PanelX backend is alive 🚀"}
+    return {"message": "PanelX backend running on Railway 🚀"}
