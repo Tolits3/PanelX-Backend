@@ -9,7 +9,8 @@ from api.routes import chat
 from api.routes import reading_progress
 from api.routes import users
 from api.routes import credits
-from api.routes import series        # ← NEW
+from api.routes import series 
+from api.routes import images       # ← NEW
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -52,4 +53,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 PanelX Backend v3 — All systems online")
-    uvicorn.run("main_simple:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
