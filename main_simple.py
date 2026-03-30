@@ -23,3 +23,4 @@ app.include_router(series_router, prefix="/api/series")
 @app.get("/")
 def root():
     return {"message": "PanelX backend running on Railway 🚀"}
+    
