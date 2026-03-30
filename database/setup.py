@@ -11,7 +11,7 @@ def create_tables():
     engine = create_engine(DATABASE_URL)
 
     with engine.connect() as conn:
-        print("🚀 Creating PanelX MySQL tables...")
+        print("Creating PanelX MySQL tables...")
 
         # ─── USERS ───
         conn.execute(text("""
@@ -27,7 +27,7 @@ def create_tables():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             );
         """))
-        print("  ✅ users table")
+        print("  users table")
 
         # ─── SERIES ───
         conn.execute(text("""
@@ -51,7 +51,7 @@ def create_tables():
                 INDEX idx_series_published (is_published)
             );
         """))
-        print("  ✅ series table")
+        print("  series table")
 
         # ─── EPISODES ───
         conn.execute(text("""
@@ -73,7 +73,7 @@ def create_tables():
                 INDEX idx_episodes_creator (creator_uid)
             );
         """))
-        print("  ✅ episodes table")
+        print("  episodes table")
 
         # ─── PANELS ───
         conn.execute(text("""
@@ -89,7 +89,7 @@ def create_tables():
                 INDEX idx_panels_episode (episode_id)
             );
         """))
-        print("  ✅ panels table")
+        print("  panels table")
 
         # ─── DIALOGUES ───
         conn.execute(text("""
@@ -107,7 +107,7 @@ def create_tables():
                 INDEX idx_dialogues_panel (panel_id)
             );
         """))
-        print("  ✅ dialogues table")
+        print("  dialogues table")
 
         # ─── READING PROGRESS ───
         conn.execute(text("""
@@ -126,7 +126,7 @@ def create_tables():
                 INDEX idx_progress_user (user_uid)
             );
         """))
-        print("  ✅ reading_progress table")
+        print("  reading_progress table")
 
         # ─── BOOKMARKS ───
         conn.execute(text("""
@@ -141,7 +141,7 @@ def create_tables():
                 INDEX idx_bookmarks_user (user_uid)
             );
         """))
-        print("  ✅ bookmarks table")
+        print("  bookmarks table")
 
         # ─── LIKES ───
         conn.execute(text("""
@@ -157,7 +157,7 @@ def create_tables():
                 UNIQUE KEY unique_like (user_uid, series_id, episode_id)
             );
         """))
-        print("  ✅ likes table")
+        print("  likes table")
 
         # ─── CREDIT TRANSACTIONS ───
         conn.execute(text("""
@@ -174,7 +174,7 @@ def create_tables():
                 INDEX idx_tx_user (user_uid)
             );
         """))
-        print("  ✅ credit_transactions table")
+        print("  credit_transactions table")
 
         # ─── PAYMENTS ───
         conn.execute(text("""
@@ -192,7 +192,7 @@ def create_tables():
                 INDEX idx_payments_user (user_uid)
             );
         """))
-        print("  ✅ payments table")
+        print("  payments table")
 
         # ─── CREDIT PACKAGES ───
         conn.execute(text("""
@@ -218,22 +218,22 @@ def create_tables():
                 ('pro',     'Pro',     400,  1999, '$19.99', '$0.05/image', 'Best Value',   3),
                 ('studio',  'Studio',  1000, 3999, '$39.99', '$0.04/image', NULL,           4);
         """))
-        print("  ✅ credit_packages table + default packages")
+        print("  credit_packages table + default packages")
 
         conn.commit()
 
-    print("\n🎉 All tables created successfully!")
-    print("➡️  Next: run 'python database/db.py' to migrate your JSON data")
+    print("\nAll tables created successfully!")
+    print("Next: run 'python database/db.py' to migrate your JSON data")
 
 
-if __name__ == "__main__":
-    try:
-        create_tables()
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        print("\n🔧 Make sure:")
-        print("  1. MySQL is running")
-        print("  2. DATABASE_URL is set in .env")
-        print("  3. panelx_db database exists")
-        print("\n  Run in MySQL first:")
-        print("  CREATE DATABASE panelx_db;")
+    if __name__ == "__main__":
+        try:
+            create_tables()
+        except Exception as e:
+            print(f"\nError: {e}")
+            print("\nMake sure:")
+            print("  1. MySQL is running")
+            print("  2. DATABASE_URL is set in .env")
+            print("  3. panelx_db database exists")
+            print("\n  Run in MySQL first:")
+            print("  CREATE DATABASE panelx_db;")
