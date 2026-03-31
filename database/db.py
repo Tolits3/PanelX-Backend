@@ -21,8 +21,15 @@ if USE_DB:
     engine = create_engine(
         DATABASE_URL,
         pool_pre_ping=True,       # auto-reconnect if connection drops
-        pool_recycle=3600,        # recycle connections every hour
-        echo=False                # set True to log all SQL queries
+        pool_recycle=1800,        # recycle connections every 30 mins (reduced for memory)
+        pool_size=2,              # small pool for 512MB RAM
+        max_overflow=3,           # limit overflow connections
+        echo=False,               # disable query logging
+        connect_args={
+            "connect_timeout": 10,
+            "read_timeout": 15,
+            "write_timeout": 15
+        }
     )
 
     SessionLocal = sessionmaker(bind=engine)
