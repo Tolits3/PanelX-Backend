@@ -49,8 +49,11 @@ if DATABASE_URL:
         fetch="one"  → single dict or None
         fetch=None   → no return (INSERT/UPDATE/DELETE)
         """
+        if params is None:
+            params = {}
+            
         with get_db_connection() as conn:
-            result = conn.execute(text(sql), params or {})
+            result = conn.execute(text(sql), params)
             conn.commit()
             
             if fetch == "one":

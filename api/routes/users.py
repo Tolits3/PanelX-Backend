@@ -1,7 +1,37 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 from database.memory_optimized import query_optimized, cleanup_connections
 
 router = APIRouter()
+
+class UserCreate(BaseModel):
+    uid: str
+    email: str
+    username: str
+    role: str
+    avatar_url: str = None
+    bio: str = None
+
+@router.get("/profile/{firebase_uid}")
+def get_user_profile(firebase_uid: str):
+    """Get user profile after Firebase login"""
+    try:
+        user = query_optimized(
+            "SELECT uid, username, role, avatar_url, bio, credit_balance FROM users WHERE uid = :uid",
+            {"uid": firebase_uid},
+            fetch="one"
+        )
+        
+        if user:
+            return {"success": True, "user": user}
+        else:
+            # User doesn't exist in our DB yet, return empty profile
+            return {"success": True, "user": None, "needs_setup": True}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        cleanup_connections()
 
 @router.get("/{user_id}")
 def get_user(user_id: str):
@@ -15,13 +45,7 @@ def get_user(user_id: str):
         if user:
             return {"success": True, "user": user}
         else:
-            # Create user if not exists (for demo purposes)
-            query_optimized(
-                "INSERT IGNORE INTO users (uid, username, role, email) VALUES (:uid, :username, :role, :email)",
-                {"uid": user_id, "username": f"User_{user_id[:8]}", "role": "reader", "email": f"{user_id}@demo.com"},
-                fetch=None
-            )
-            return {"success": True, "user": {"uid": user_id, "username": f"User_{user_id[:8]}", "role": "reader"}}
+            return {"success": False, "error": "User not found"}
             
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -29,14 +53,32 @@ def get_user(user_id: str):
         cleanup_connections()
 
 @router.post("/create")
-def create_user(data: dict):
+def create_user(user_data: UserCreate):
     try:
+        # Check if user already exists
+        existing = query_optimized(
+            "SELECT uid FROM users WHERE uid = :uid OR email = :email",
+            {"uid": user_data.uid, "email": user_data.email},
+            fetch="one"
+        )
+        
+        if existing:
+            return {"success": False, "error": "User already exists"}
+        
+        # Create new user
         query_optimized(
-            "INSERT INTO users (uid, email, username, role, avatar_url, bio) VALUES (:uid, :email, :username, :role, :avatar_url, :bio)",
-            data,
+            "INSERT INTO users (uid, email, username, role) VALUES (:uid, :email, :username, :role)",
+            {
+                "uid": user_data.uid,
+                "email": user_data.email,
+                "username": user_data.username,
+                "role": user_data.role
+            },
             fetch=None
         )
-        return {"success": True, "message": "User created", "user": data}
+        
+        return {"success": True, "message": "User created successfully", "user": {"uid": user_data.uid, "username": user_data.username, "role": user_data.role}}
+        
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
