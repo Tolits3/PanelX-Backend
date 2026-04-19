@@ -10,8 +10,10 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "https://panelsx.netlify.app"
+        "https://panelsx.netlify.app",           # Old Netlify
+        "https://panel-x-frontend.vercel.app",   # New Vercel ← ADD THIS
+        "http://localhost:5173",                  # Local dev
+        "http://localhost:3000",                  # Local dev alt
     ],
     allow_credentials=True,
     allow_methods=["*"],
