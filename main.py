@@ -16,6 +16,12 @@ app = FastAPI()
 
 app.include_router(chat.router)
 
+@app.on_event("startup")
+async def startup():
+    # Auto-create all tables on startup
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database tables created!")
+
 @app.get("/")
 def home():
     return {"status": "PanelX API is running"}

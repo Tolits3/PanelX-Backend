@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 python-dotenv
-pymysql
+psycopg2-binary
 sqlalchemy
 requests
 python-multipart

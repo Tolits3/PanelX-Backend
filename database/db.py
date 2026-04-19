@@ -18,19 +18,16 @@ if USE_DB:
     from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
 
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,       # auto-reconnect if connection drops
-        pool_recycle=1800,        # recycle connections every 30 mins (reduced for memory)
-        pool_size=2,              # small pool for 512MB RAM
-        max_overflow=3,           # limit overflow connections
-        echo=False,               # disable query logging
-        connect_args={
-            "connect_timeout": 10,
-            "read_timeout": 15,
-            "write_timeout": 15
-        }
-    )
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Fix for Render PostgreSQL (they use postgres:// but SQLAlchemy needs postgresql://)
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True
+)
 
     SessionLocal = sessionmaker(bind=engine)
 
