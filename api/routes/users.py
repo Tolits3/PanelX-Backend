@@ -55,17 +55,16 @@ def get_user(user_id: str):
 @router.post("/create")
 def create_user(user_data: UserCreate):
     try:
-        # Check if user already exists
         existing = query_optimized(
             "SELECT uid FROM users WHERE uid = :uid OR email = :email",
             {"uid": user_data.uid, "email": user_data.email},
             fetch="one"
         )
-        
+
         if existing:
             return {"success": False, "error": "User already exists"}
-        
-        # Create new user
+
+        # ✅ CREATE USER ONLY IF NOT EXISTS
         query_optimized(
             "INSERT INTO users (uid, email, username, role) VALUES (:uid, :email, :username, :role)",
             {
@@ -76,10 +75,19 @@ def create_user(user_data: UserCreate):
             },
             fetch=None
         )
-        
-        return {"success": True, "message": "User created successfully", "user": {"uid": user_data.uid, "username": user_data.username, "role": user_data.role}}
-        
+
+        return {
+            "success": True,
+            "message": "User created successfully",
+            "user": {
+                "uid": user_data.uid,
+                "username": user_data.username,
+                "role": user_data.role
+            }
+        }
+
     except Exception as e:
         return {"success": False, "error": str(e)}
+
     finally:
         cleanup_connections()
