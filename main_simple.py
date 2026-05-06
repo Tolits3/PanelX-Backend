@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 import os
+import httpx
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -49,7 +50,7 @@ class ChatMessage(BaseModel):
     message: str
     user_uid: Optional[str] = None
     context: Optional[str] = "comic creation"
-    generate_image: Optional[bool] = False
+    generate_image: Optional[bool] = True
 
 class CreditRequest(BaseModel):
     user_uid: str
@@ -262,6 +263,97 @@ async def get_creator_episodes(user_uid: str):
     except Exception as e:
         print(f"Error fetching episodes: {e}")
         return {"success": True, "episodes": []}
+
+
+@app.get("/api/mangadex/popular")
+async def mangadex_popular(limit: int = 20):
+    """Proxy MangaDex popular manga"""
+    try:
+        url = f"https://api.mangadex.org/manga?limit={limit}&contentRating%5B%5D=safe&includes%5B%5D=cover_art&availableTranslatedLanguage%5B%5D=en&order%5BfollowedCount%5D=desc"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        print(f"MangaDex proxy error: {e}")
+        return {"data": []}
+
+@app.get("/api/mangadex/latest")
+async def mangadex_latest(limit: int = 20):
+    """Proxy MangaDex latest manga"""
+    try:
+        url = f"https://api.mangadex.org/manga?limit={limit}&contentRating%5B%5D=safe&includes%5B%5D=cover_art&availableTranslatedLanguage%5B%5D=en&order%5BlatestUploadedChapter%5D=desc"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        print(f"MangaDex proxy error: {e}")
+        return {"data": []}
+
+@app.get("/api/mangadex/search")
+async def mangadex_search(title: str = "", limit: int = 10):
+    """Proxy MangaDex search"""
+    try:
+        url = f"https://api.mangadex.org/manga?limit={limit}&contentRating%5B%5D=safe&includes%5B%5D=cover_art&availableTranslatedLanguage%5B%5D=en&title={title}"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"data": []}
+
+@app.get("/api/mangadex/genre/{tag_id}")
+async def mangadex_by_genre(tag_id: str, limit: int = 20):
+    """Proxy MangaDex genre filter"""
+    try:
+        url = f"https://api.mangadex.org/manga?limit={limit}&contentRating%5B%5D=safe&includes%5B%5D=cover_art&availableTranslatedLanguage%5B%5D=en&includedTags%5B%5D={tag_id}"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"data": []}
+
+@app.get("/api/mangadex/manga/{manga_id}")
+async def mangadex_manga(manga_id: str):
+    """Proxy MangaDex manga details"""
+    try:
+        url = f"https://api.mangadex.org/manga/{manga_id}?includes%5B%5D=cover_art&includes%5B%5D=author&includes%5B%5D=artist"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"data": None}
+
+@app.get("/api/mangadex/manga/{manga_id}/chapters")
+async def mangadex_chapters(manga_id: str):
+    """Proxy MangaDex chapter list"""
+    try:
+        url = f"https://api.mangadex.org/manga/{manga_id}/feed?limit=100&translatedLanguage%5B%5D=en&order%5Bchapter%5D=desc&includes%5B%5D=scanlation_group&contentRating%5B%5D=safe"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"data": []}
+
+@app.get("/api/mangadex/chapter/{chapter_id}/pages")
+async def mangadex_pages(chapter_id: str):
+    """Proxy MangaDex chapter pages"""
+    try:
+        url = f"https://api.mangadex.org/at-home/server/{chapter_id}"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"result": "error"}
+
+@app.get("/api/mangadex/chapter/{chapter_id}/info")
+async def mangadex_chapter_info(chapter_id: str):
+    """Proxy MangaDex chapter info"""
+    try:
+        url = f"https://api.mangadex.org/chapter/{chapter_id}?includes%5B%5D=manga"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=10)
+            return res.json()
+    except Exception as e:
+        return {"data": None}
 
 @app.get("/api/episodes/{episode_id}")
 async def get_episode(episode_id: str):
